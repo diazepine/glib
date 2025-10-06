@@ -26,7 +26,16 @@ void glib_init(void);
 
 int main(void) {
 
+  // XXX NOTE: we need to explicitly call glib_init() here so that the
+  // following g_print calls work
+  glib_init();
+
   exhaust_tls_keys(FALSE);
+
+  // call glib_deinit here so that we can replicate a glib_init failure due
+  // to exhausted TLS keys
+  glib_deinit();
+
   glib_init();
 
   return 0;

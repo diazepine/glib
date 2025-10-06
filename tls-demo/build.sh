@@ -9,12 +9,11 @@ export PKG_CONFIG_PATH="$STAGE_ROOT/usr/local/lib/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR="$STAGE_ROOT"
 
 function build_test() {
-    # if you want to disable ASAN, just remove:
-    # # -fsanitize=address \
+    # if you want to enable ASAN, just add the flag below in cc command
+    #   -fsanitize=address \
     local src="$1"
     local out="$2"
     cc -g \
-        -fsanitize=address \
         "$src" -o "$out" \
         $(pkg-config --cflags glib-2.0) \
         -L"$STAGE_ROOT/usr/local/lib" -Wl,-search_paths_first \
