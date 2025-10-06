@@ -20,7 +20,3 @@ python = '$PY'
 python3 = '$PY'
 EOF
 cat native-3.11.ini
-
-python -V
-python -c 'import sys; print(sys.executable)'
-pip install --upgrade pip meson ninja

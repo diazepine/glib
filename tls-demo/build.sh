@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -9,22 +8,49 @@ cd "$(dirname "$0")"
 export PKG_CONFIG_PATH="$STAGE_ROOT/usr/local/lib/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR="$STAGE_ROOT"
 
-# if you want to disable ASAN, just remove:
-# -fsanitize=address \
-rm -f tls_demo
-cc -g \
-    -fsanitize=address \
-    tls_demo.c -o tls_demo \
-  $(pkg-config --cflags glib-2.0) \
-  -L"$STAGE_ROOT/usr/local/lib" -Wl,-search_paths_first \
-  -lglib-2.0 $(pkg-config --libs glib-2.0 | sed 's/-lglib-2\.0//') \
-  -Wl,-rpath,@loader_path/../builddir/_stage/usr/local/lib
+function build_test() {
+    # if you want to disable ASAN, just remove:
+    # # -fsanitize=address \
+    local src="$1"
+    local out="$2"
+    cc -g \
+        -fsanitize=address \
+        "$src" -o "$out" \
+        $(pkg-config --cflags glib-2.0) \
+        -L"$STAGE_ROOT/usr/local/lib" -Wl,-search_paths_first \
+        -lglib-2.0 $(pkg-config --libs glib-2.0 | sed 's/-lglib-2\.0//') \
+        -Wl,-rpath,@loader_path/../builddir/_stage/usr/local/lib
+    }
 
-install_name_tool -id @rpath/libglib-2.0.0.dylib \
-  "$STAGE_ROOT/usr/local/lib/libglib-2.0.0.dylib" 2>/dev/null || true
-install_name_tool -change /usr/local/lib/libglib-2.0.0.dylib \
-  @rpath/libglib-2.0.0.dylib ./tls_demo 2>/dev/null || true
-install_name_tool -change /usr/local/lib/libintl.8.dylib \
-  @rpath/libintl.8.dylib ./tls_demo 2>/dev/null || true
+function use_local_glib_in_executable() {
+    local bin="$1"
+    install_name_tool -id @rpath/libglib-2.0.0.dylib \
+        "$STAGE_ROOT/usr/local/lib/libglib-2.0.0.dylib" 2>/dev/null || true
+    install_name_tool -change /usr/local/lib/libglib-2.0.0.dylib \
+        @rpath/libglib-2.0.0.dylib "$bin" 2>/dev/null || true
+    install_name_tool -change /usr/local/lib/libintl.8.dylib \
+        @rpath/libintl.8.dylib "$bin" 2>/dev/null || true
+    }
 
-otool -L ./tls_demo | grep libglib || true
+function show_glib_path_for_executable() {
+    local bin="$1"
+    otool -L "$bin" | grep libglib || true
+}
+
+function clean_test() {
+    local out="$1"
+    rm -f "$out"
+}
+
+# clean and build tests
+clean_test tls_demo
+clean_test test_glib_on_exhausted_tls_keys
+
+build_test tls_demo.c tls_demo
+build_test test_glib_on_exhausted_tls_keys.c test_glib_on_exhausted_tls_keys
+
+use_local_glib_in_executable tls_demo
+use_local_glib_in_executable test_glib_on_exhausted_tls_keys
+
+show_glib_path_for_executable tls_demo
+show_glib_path_for_executable test_glib_on_exhausted_tls_keys
