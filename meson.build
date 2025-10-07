@@ -2428,6 +2428,11 @@ elif host_system == 'cygwin'
   win32_ldflags = ['-luser32', '-lkernel32']
 endif
 
+if get_option('fallible_gprivate')
+  add_project_arguments('-DG_FALLIBLE_GPRIVATE=1', language : 'c')
+  summary('gprivate fallible', 'yes', section: 'Options')
+endif
+
 # Tracing: dtrace
 want_dtrace = get_option('dtrace')
 enable_dtrace = false

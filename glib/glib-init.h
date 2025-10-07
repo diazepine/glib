@@ -22,9 +22,6 @@
 #ifndef __GLIB_INIT_H__
 #define __GLIB_INIT_H__
 
-/* This is for enable fallible GPrivate API */
-#define G_FALLIBLE_GPRIVATE 1
-
 #include "gmessages.h"
 
 typedef void (* GXtorFunc) (void);

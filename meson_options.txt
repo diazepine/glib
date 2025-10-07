@@ -139,3 +139,8 @@ option('multiarch',
        type : 'boolean',
        value : false,
        description : 'Install some helper executables in per-architecture locations')
+
+option('fallible_gprivate',
+        type : 'boolean',
+        value : false,
+        description : 'Make GPrivate fallible instead of aborting')
