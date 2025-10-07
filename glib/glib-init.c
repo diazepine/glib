@@ -432,6 +432,14 @@ glib_init (void)
 
   if (glib_initialized)
     return;
+
+#if defined(G_FALLIBLE_GPRIVATE)
+  /* If TLS keys are exhausted, do not attempt to init as this would hit
+   * g_quark/logging code that rely on TLS! */
+  if (G_UNLIKELY (!glib_is_tls_available ()))
+    return;
+#endif
+
   glib_initialized = TRUE;
 
   glib_perform_init ();
