@@ -280,6 +280,10 @@ GLIB_AVAILABLE_IN_ALL
 void            g_once_init_leave               (volatile void  *location,
                                                  gsize           result);
 
+/* needed for fallible GPrivate API */
+GLIB_AVAILABLE_IN_ALL
+gboolean        g_is_tls_available              (void);
+
 /* Use C11-style atomic extensions to check the fast path for status=ready. If
  * they are not available, fall back to using a mutex and condition variable in
  * g_once_impl().

@@ -122,6 +122,20 @@
 
 G_BEGIN_DECLS
 
+
+typedef void (*GlibFailureCallback) (void *user_data);
+
+/* TRUE until the first pthread_key_create() fails anywhere inside GLib. */
+GLIB_AVAILABLE_IN_2_68
+gboolean glib_is_available (void);
+
+/* One-shot callback fired on the first TLS failure
+ * NOTE: The callback must not call GLib functions that may use TLS
+ */
+GLIB_AVAILABLE_IN_2_68
+void glib_set_failure_callback (GlibFailureCallback cb, void *user_data);
+
+
 GLIB_AVAILABLE_IN_2_68
 void                            glib_init                               (void);
 

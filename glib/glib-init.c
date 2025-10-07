@@ -417,6 +417,14 @@ static gint num_destructors = 0;
   x[(num_ ## x)++] = f;                          \
   }G_STMT_END
 
+
+/* needed for the fallible GPrivate API */
+gboolean
+glib_is_available (void)
+{
+  return glib_initialized && g_is_tls_available ();
+}
+
 void
 glib_init (void)
 {

@@ -632,7 +632,7 @@ _g_main_recover_from_fork_in_child (void)
 /**
  * g_main_context_ref:
  * @context: a #GMainContext
- * 
+ *
  * Increases the reference count on a #GMainContext object by one.
  *
  * Returns: the @context that was passed in (since 2.6)
@@ -856,6 +856,18 @@ g_main_context_new_with_flags (GMainContextFlags flags)
   return context;
 }
 
+/*
+ * changes needed for fallible GPrivate:
+ * use G_FALLIBLE_GPRIVATE as a guard to avoid hitting g_return_if_fail()
+ * (which logs & locks) when TLS is not available, so we can shutdown
+ * gracefully
+ *
+ * functions patched:
+ * - g_main_context_default()
+ * - g_main_context_push_thread_default()
+ * - g_main_context_pop_thread_default()
+ */
+
 /**
  * g_main_context_default:
  *
@@ -869,6 +881,10 @@ g_main_context_new_with_flags (GMainContextFlags flags)
 GMainContext *
 g_main_context_default (void)
 {
+#if defined(G_FALLIBLE_GPRIVATE)
+  if (!glib_is_available ())
+    return NULL;
+#endif
   if (g_once_init_enter (&default_main_context))
     {
       GMainContext *context;
@@ -956,6 +972,12 @@ static GPrivate thread_context_stack = G_PRIVATE_INIT (free_context_stack);
 void
 g_main_context_push_thread_default (GMainContext *context)
 {
+
+#if defined(G_FALLIBLE_GPRIVATE)
+  if (!glib_is_available ())
+    return;
+#endif
+
   GQueue *stack;
   gboolean acquired_context;
 
@@ -991,6 +1013,12 @@ g_main_context_push_thread_default (GMainContext *context)
 void
 g_main_context_pop_thread_default (GMainContext *context)
 {
+
+#if defined(G_FALLIBLE_GPRIVATE)
+  if (!glib_is_available ())
+    return;
+#endif
+
   GQueue *stack;
 
   if (context == g_main_context_default ())

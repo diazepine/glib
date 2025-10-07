@@ -43,6 +43,9 @@
 
 #include "gthread.h"
 
+/* this is needed for GlibFailureCallback type */
+#include "glib.h"
+
 #include "glib-init.h"
 #include "gmain.h"
 #include "gmessages.h"
@@ -87,6 +90,56 @@
 #ifdef G_DISABLE_CHECKS
 #include "glib-nolog.h"
 #endif
+
+/* The following are needed for the fallible GPrivate API */
+static volatile int g_tls_available = 1;
+static GlibFailureCallback g_tls_failure_cb = NULL;
+static void *g_tls_cb_failure_data = NULL;
+
+/* Return TRUE if TLS is available, FALSE otherwise.
+ * Once this returns FALSE, it will always return FALSE.
+ * This function is lock-free and async-signal-safe.
+ */
+gboolean
+g_is_tls_available (void)
+{
+  return g_atomic_int_get (&g_tls_available) != 0;
+}
+
+/* Set a callback to be invoked on the first TLS failure.
+ * The callback must not call GLib functions that may use TLS.
+ * This function is lock-free and async-signal-safe.
+ */
+void
+glib_set_failure_callback (GlibFailureCallback cb, void *user_data)
+{
+  g_atomic_pointer_set (&g_tls_failure_cb, cb);
+  g_atomic_pointer_set (&g_tls_cb_failure_data, user_data);
+}
+
+/* Wrapper around pthread_key_create that marks TLS unavailable
+ * on failure and invokes the one-shot callback if set.
+ * This function is NOT async-signal-safe (it uses atomics).
+ */
+static inline int
+g_tls_key_create (pthread_key_t *key, void (*dtor)(void *))
+{
+  int r = pthread_key_create (key, dtor);
+  if (G_UNLIKELY (r != 0)) {
+    /* Mark permanently unavailable; fire one-shot callback. */
+    if (g_atomic_int_exchange (&g_tls_available, 0) != 0) {
+      GlibFailureCallback cb = g_atomic_pointer_get (&g_tls_failure_cb);
+      void *ud = g_atomic_pointer_get (&g_tls_cb_failure_data);
+      if (cb != NULL) {
+        /* XXX NOTE: IMPORTANT: Do not call GLib here. */
+        cb (ud);
+      }
+    }
+  }
+  return r;
+}
+
+
 
 static pthread_mutex_t g_thread_state_lock;
 static pthread_key_t g_thread_cleanup_key;
@@ -1055,6 +1108,92 @@ g_cond_wait_until (GCond  *cond,
  * be accessed via the g_private_ functions.
  */
 
+#if defined(G_FALLIBLE_GPRIVATE)
+
+/**
+ * GPrivateImpl:
+ * @key: the pthread key
+ * @valid: whether the key is valid
+ * @notify: the destructor function
+ *
+ * The actual implementation of a #GPrivate so that we can handle
+ * failures from pthread_key_create() without aborting.
+ **/
+typedef struct
+{
+  pthread_key_t key;
+  unsigned int  valid : 1; /* (bitfield) this is 1 if the key is valid */
+  void        (*notify) (gpointer data);  /* destructor */
+} GPrivateImpl;
+
+#if 0
+/**
+ * _g_private_impl_init:
+ * @priv: a #GPrivateImpl
+ * @notify: a #GDestroyNotify
+ *
+ * Initializes a #GPrivateImpl without aborting on failure.
+ * This function is for internal GLib use only.
+ */
+static void
+_g_private_impl_init (GPrivateImpl *priv, void (*notify) (gpointer))
+{
+  priv->notify = notify;
+
+  /* Try to create a TLS key; do not abort if it fails. */
+  int r = g_tls_key_create (&priv->key, notify);
+  if (r != 0) {
+    /* pthread_key_create failed (EAGAIN/ENOMEM). Mark invalid. */
+    priv->valid = 0;
+    return;
+  }
+
+  priv->valid = 1;
+}
+
+/**
+ * _g_private_impl_get:
+ * @priv: a #GPrivateImpl
+ *
+ * Returns the current value of the thread local variable @priv.
+ * This function is for internal GLib use only.
+ *
+ * Safe getter: returns NULL if TLS unavailable or key invalid.
+ */
+gpointer
+_g_private_impl_get (GPrivateImpl *priv)
+{
+  if (G_UNLIKELY (!priv->valid))
+    return NULL;
+
+  return pthread_getspecific (priv->key);
+}
+
+/**
+ * _g_private_impl_set:
+ * @priv: a #GPrivateImpl
+ * @value: the new value
+ *
+ * Sets the thread local variable @priv to have the value @value in the
+ * current thread.
+ * This function is for internal GLib use only.
+ *
+ * Safe setter: does nothing if TLS unavailable or key invalid.
+ */
+void
+_g_private_impl_set (GPrivateImpl *priv, gpointer value)
+{
+  if (G_UNLIKELY (!priv->valid))
+    return;
+
+  /* Ignore failure here; nothing sensible to do if it occurs. */
+  (void) pthread_setspecific (priv->key, value);
+}
+#endif
+
+#endif /* G_FALLIBLE_GPRIVATE */
+
+
 /**
  * G_PRIVATE_INIT:
  * @notify: a #GDestroyNotify
@@ -1118,9 +1257,18 @@ g_private_impl_new (void)
   key = glib_mem_table->malloc (sizeof (pthread_key_t));
   if G_UNLIKELY (key == NULL)
     g_thread_abort (errno, "malloc");
+
+#if defined(G_FALLIBLE_GPRIVATE)
+  status = g_tls_key_create (key, NULL);
+  if G_UNLIKELY (status != 0) {
+    glib_mem_table->free (key);
+    return NULL;
+  }
+#else
   status = pthread_key_create (key, NULL);
   if G_UNLIKELY (status != 0)
     g_thread_abort (status, "pthread_key_create");
+#endif
 
   return key;
 }
@@ -1128,6 +1276,13 @@ g_private_impl_new (void)
 static void
 g_private_impl_free (pthread_key_t *key)
 {
+
+#if defined(G_FALLIBLE_GPRIVATE)
+  /* If the key is invalid, it was never created, so nothing to do. */
+  if (key == NULL)
+    return;
+#endif
+
   gint status;
 
   status = pthread_key_delete (*key);
@@ -1144,6 +1299,11 @@ g_private_get_impl (GPrivate *key)
   if G_UNLIKELY (impl == NULL)
     {
       impl = g_private_impl_new ();
+#if defined(G_FALLIBLE_GPRIVATE)
+      /* If we failed to create the key, just return NULL */
+      if (impl == NULL)
+        return NULL;
+#endif
       if (!g_atomic_pointer_compare_and_exchange (&key->p, NULL, impl))
         {
           g_private_impl_free (impl);
@@ -1173,8 +1333,15 @@ g_private_get_impl (GPrivate *key)
 gpointer
 g_private_get (GPrivate *key)
 {
+#if defined(G_FALLIBLE_GPRIVATE)
+  pthread_key_t *impl = g_private_get_impl (key);
+
+  if (G_UNLIKELY (impl == NULL))
+    return NULL;
+#endif
   /* quote POSIX: No errors are returned from pthread_getspecific(). */
   return pthread_getspecific (*g_private_get_impl (key));
+
 }
 
 /**
@@ -1192,6 +1359,14 @@ void
 g_private_set (GPrivate *key,
                gpointer  value)
 {
+#if defined(G_FALLIBLE_GPRIVATE)
+  pthread_key_t *impl = g_private_get_impl (key);
+
+  /* If we failed to create the key, just return and don't proceed with
+   * pthread_setspecific that can result to a crash */
+  if (G_UNLIKELY (impl == NULL))
+    return;
+#endif
   gint status;
 
   if G_UNLIKELY ((status = pthread_setspecific (*g_private_get_impl (key), value)) != 0)
@@ -1220,6 +1395,14 @@ g_private_replace (GPrivate *key,
                    gpointer  value)
 {
   pthread_key_t *impl = g_private_get_impl (key);
+
+#if defined(G_FALLIBLE_GPRIVATE)
+  /* If we failed to create the key, just return and don't proceed with
+   * pthread_setspecific that can result to a crash */
+  if (G_UNLIKELY (impl == NULL))
+    return;
+#endif
+
   gpointer old;
   gint status;
 
@@ -1940,9 +2123,17 @@ _g_thread_init (void)
   if G_UNLIKELY ((status = pthread_mutex_init (&g_thread_state_lock, pattr)) != 0)
     g_thread_abort (status, "pthread_mutex_init");
 
+#if defined(G_FALLIBLE_GPRIVATE)
+  status = g_tls_key_create (&g_thread_cleanup_key, g_thread_schedule_cleanup);
+  if G_UNLIKELY (status != 0) {
+    /* Don't abort. TLS is unavailable; callback if set (already fired) */
+    /* keep going so callers can detect glib_is_tls_available() */
+  }
+#else
   if G_UNLIKELY ((status = pthread_key_create (&g_thread_cleanup_key,
       g_thread_schedule_cleanup)) != 0)
     g_thread_abort (status, "pthread_key_create");
+#endif
 
 #ifdef PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP
   pthread_mutexattr_destroy (&attr);

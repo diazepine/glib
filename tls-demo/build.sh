@@ -44,12 +44,16 @@ function clean_test() {
 # clean and build tests
 clean_test tls_demo
 clean_test test_glib_on_exhausted_tls_keys
+clean_test test_gprivate
 
 build_test tls_demo.c tls_demo
 build_test test_glib_on_exhausted_tls_keys.c test_glib_on_exhausted_tls_keys
+build_test test_gprivate.c test_gprivate
 
 use_local_glib_in_executable tls_demo
 use_local_glib_in_executable test_glib_on_exhausted_tls_keys
+use_local_glib_in_executable test_gprivate
 
 show_glib_path_for_executable tls_demo
 show_glib_path_for_executable test_glib_on_exhausted_tls_keys
+show_glib_path_for_executable test_gprivate
