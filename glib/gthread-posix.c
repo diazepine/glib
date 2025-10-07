@@ -169,6 +169,10 @@ static void
 g_thread_state_remove (GPtrSet  *pset,
                        gpointer  item)
 {
+#if defined(G_FALLIBLE_GPRIVATE)
+  if (G_UNLIKELY (pset == NULL))
+    return; /* TLS not available; skip thread tracking */
+#endif
   pthread_mutex_lock (&g_thread_state_lock);
   g_ptr_set_remove (pset, item);
   pthread_mutex_unlock (&g_thread_state_lock);
