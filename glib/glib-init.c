@@ -36,8 +36,16 @@
 
 /* Deliberately not checking HAVE_STDINT_H here: we officially require a
  * C99 toolchain, which implies <stdint.h>, int8_t and so on. If your
- * toolchain does not have this, now would be a good time to upgrade. */
+* toolchain does not have this, now would be a good time to upgrade. */
 #include <stdint.h>
+
+/* needed for glib_try_init() */
+#include "glib.h"
+#include <pthread.h>
+#include <unistd.h> /* for sysconf() */
+
+#define GLIB_TRY_INIT_OK 0
+#define GLIB_TRY_INIT_ERROR_NO_TLS_HEADROOM -1
 
 /* This seems as good a place as any to make static assertions about platform
  * assumptions we make throughout GLib. */
@@ -425,12 +433,80 @@ glib_init (void)
   G_XTORS_CLEAR (constructors);
 }
 
+
+static gboolean probe_tls_headroom ();
+
+int
+glib_try_init ()
+{
+  /* Optional: consult sysconf for visibility into platform limits.
+   * (Bionic exposes _SC_THREAD_KEYS_MAX == PTHREAD_KEYS_MAX.)
+   */
+  long max_keys = sysconf (_SC_THREAD_KEYS_MAX); /* may be -1 if unknown */
+  (void) max_keys;
+
+  if (!probe_tls_headroom ()) {
+    return GLIB_TRY_INIT_ERROR_NO_TLS_HEADROOM;
+  }
+
+  /* Call the existing init (same as constructor path). */
+  glib_init ();
+  return GLIB_TRY_INIT_OK;
+}
+
 void
 glib_shutdown (void)
 {
   _g_thread_pool_shutdown ();
   _g_main_shutdown ();
 }
+
+/* We want to be able to use thread-local storage (TLS) in core GLib code,
+ * so we need to ensure that there are enough TLS slots available
+ *
+ * The POSIX standard does not provide a way to query the number of
+ * available TLS slots, so we have to probe by trying to allocate
+ * some keys
+ *
+ * We need at least 8 slots for core GLib:
+ * - 1 for GThread's self pointer
+ * - 1 for GError's per-thread error
+ * - 1 for g_once_init_enter/leave()
+ * - 1 for g_malloc() debugging hooks
+ * - 1 for g_log()'s fatal log handler
+ * - 1 for g_mem_set_vtable()'s memory allocation hooks
+ * - 1 for g_slice_set_config()'s memory allocation hooks
+ * - 1 spare
+ *
+ * We try to allocate double that number of slots which should be enough
+ * in our case
+ *
+ * If this fails, we assume that there is no headroom left so we return
+ * an error and avoid using TLS
+ */
+
+#define MIN_TLS_SLOTS 8
+#define PROBE_TLS_SLOTS (MIN_TLS_SLOTS * 2)
+
+// Check if we have enough thread-local storage (TLS) slots
+static gboolean
+probe_tls_headroom ()
+{
+  pthread_key_t keys[PROBE_TLS_SLOTS];
+  guint ok = 0;
+  while (ok < G_N_ELEMENTS (keys)) {
+    // set destructor to NULL, we just want to check allocation
+    // and then we free them all at once
+    int r = pthread_key_create (&keys[ok], NULL);
+    if (r != 0)  // EAGAIN/ENOMEM -> not enough headroom
+      break;
+    ok++;
+  }
+  for (guint i = 0; i < ok; i++)
+    pthread_key_delete (keys[i]);
+  return ok >= MIN_TLS_SLOTS;
+}
+
 
 void
 glib_deinit (void)

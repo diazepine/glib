@@ -125,6 +125,12 @@ G_BEGIN_DECLS
 GLIB_AVAILABLE_IN_2_68
 void                            glib_init                               (void);
 
+/* add a fallible version of glib_init that attempts to initialize glib
+ * and returns error if fails
+ */
+GLIB_AVAILABLE_IN_2_68
+int                             glib_try_init                           (void);
+
 GLIB_AVAILABLE_IN_2_68
 void                            glib_enable_io_features                 (void);
 
