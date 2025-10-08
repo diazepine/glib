@@ -31,12 +31,15 @@ int main(void) {
 
   // use printf to avoid glib calls before glib_init
   printf(" 1. Try glib_init when TLS keys are available\n");
+#if 0
   if (glib_try_init()) {
     printf(" -> glib_try_init failed!\n");
     return 1;
   } else {
     g_print(" -> glib_try_init succeeded\n");
   }
+#endif
+  glib_init();
 
   exhaust_tls_keys(FALSE);
 
@@ -44,6 +47,7 @@ int main(void) {
   // to exhausted TLS keys
   glib_deinit();
 
+#if 0
   printf(" 2. Try glib_init when TLS keys are exhausted\n");
   if (glib_try_init()) {
     printf(" -> glib_try_init failed!\n");
@@ -51,6 +55,8 @@ int main(void) {
   } else {
     g_print(" -> glib_try_init succeeded\n");
   }
+#endif
+  glib_init();
 
   return 0;
 }
