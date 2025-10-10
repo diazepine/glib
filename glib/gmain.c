@@ -881,10 +881,6 @@ g_main_context_new_with_flags (GMainContextFlags flags)
 GMainContext *
 g_main_context_default (void)
 {
-#if defined(G_FALLIBLE_GPRIVATE)
-  if (!glib_is_available ())
-    return NULL;
-#endif
   if (g_once_init_enter (&default_main_context))
     {
       GMainContext *context;
@@ -1096,8 +1092,11 @@ g_main_context_ref_thread_default (void)
   /* If TLS isn’t available, we cannot keep a per-thread stack.
    * Fall back to the global default context instead of crashing.
    */
-  if (!glib_is_available ())
-    return g_main_context_ref (g_main_context_default ());
+  if (!glib_is_available ()) {
+    //return g_main_context_ref (g_main_context_default ());
+    GMainContext *def = g_main_context_default (); /* never NULL */
+    return g_main_context_ref (def);
+  }
 #endif
   GMainContext *context;
 
@@ -3231,6 +3230,12 @@ static GMainDispatch *
 get_dispatch (void)
 {
   static GPrivate depth_private = G_PRIVATE_INIT (g_main_dispatch_free);
+#if defined(G_FALLIBLE_GPRIVATE)
+  if (!glib_is_available ()) {
+    // XXX TODO: emulate TLS with a global map keyed by thread id guarded by a mutex
+    return NULL;
+  }
+#endif
   GMainDispatch *dispatch;
 
   dispatch = g_private_get (&depth_private);
