@@ -868,6 +868,49 @@ g_main_context_new_with_flags (GMainContextFlags flags)
  * - g_main_context_pop_thread_default()
  */
 
+/* emulate TLS for GMainContext state when TLS is not available */
+#if defined(G_FALLIBLE_GPRIVATE)
+typedef struct {
+  GQueue *context_stack;      /* replaces thread_context_stack */
+  GMainDispatch dispatch;     /* replaces depth_private */
+} GFallbackTLS;
+
+static GHashTable *g_faketls = NULL;   /* key: pthread_t-as-pointer */
+static GMutex g_faketls_lock;
+
+/**
+ * get_fallback_tls:
+ *
+ * Uses a global hash table to map pthread_self() to a GFallbackTLS
+ * structure.  Creates the hash table on first use. This is to emulate
+ * thread-local storage when TLS is not available.
+ *
+ * Returns: (not nullable): a GFallbackTLS structure for the current thread
+ * Since: 2.74
+ */
+static GFallbackTLS *
+get_fallback_tls (void)
+{
+  GFallbackTLS *t;
+  pthread_t self = pthread_self();
+
+  g_mutex_lock(&g_faketls_lock);
+  if (g_faketls == NULL)
+    g_faketls = g_hash_table_new(g_direct_hash, g_direct_equal);
+
+  t = g_hash_table_lookup(g_faketls, (gpointer)self);
+  if (t == NULL) {
+    t = g_new0(GFallbackTLS, 1);
+    t->context_stack = g_queue_new();  /* will leak on process exit */
+    g_hash_table_insert(g_faketls, (gpointer)self, t);
+  }
+  g_mutex_unlock(&g_faketls_lock);
+  return t;
+}
+#endif
+
+
+
 /**
  * g_main_context_default:
  *
@@ -970,8 +1013,24 @@ g_main_context_push_thread_default (GMainContext *context)
 {
 
 #if defined(G_FALLIBLE_GPRIVATE)
-  if (!glib_is_available ())
+  /* If TLS isn’t available, we cannot keep a per-thread stack.
+   * Fall back to the global default context instead of crashing.
+   */
+  if (!glib_is_available ()) {
+    GFallbackTLS *t = get_fallback_tls();
+    gboolean acquired_context = g_main_context_acquire (context);
+    if (G_UNLIKELY (!acquired_context))
+      return; /* mirror g_return_if_fail without aborting */
+
+    if (context == g_main_context_default ())
+      context = NULL;
+    else if (context)
+      g_main_context_ref (context);
+
+    g_queue_push_head (t->context_stack, context);
+    TRACE (GLIB_MAIN_CONTEXT_PUSH_THREAD_DEFAULT (context));
     return;
+  }
 #endif
 
   GQueue *stack;
@@ -1009,10 +1068,31 @@ g_main_context_push_thread_default (GMainContext *context)
 void
 g_main_context_pop_thread_default (GMainContext *context)
 {
-
 #if defined(G_FALLIBLE_GPRIVATE)
-  if (!glib_is_available ())
+  /* If TLS isn’t available, we cannot keep a per-thread stack.
+   * Fall back to the global default context instead of crashing.
+   */
+  if (!glib_is_available ()) {
+    GFallbackTLS *t = get_fallback_tls();
+
+    if (context == g_main_context_default ())
+      context = NULL;
+
+    /* mirror g_return_if_fail semantics without aborting */
+    if (t->context_stack == NULL || t->context_stack->head == NULL)
+      return;
+    if (t->context_stack->head->data != context)
+      return;
+
+    TRACE (GLIB_MAIN_CONTEXT_POP_THREAD_DEFAULT (context));
+
+    g_queue_pop_head (t->context_stack);
+
+    g_main_context_release (context);
+    if (context)
+      g_main_context_unref (context);
     return;
+  }
 #endif
 
   GQueue *stack;
@@ -1058,8 +1138,13 @@ GMainContext *
 g_main_context_get_thread_default (void)
 {
 #if defined(G_FALLIBLE_GPRIVATE)
-  if (!glib_is_available ())
-    return NULL;
+  if (!glib_is_available ()) {
+    /* If TLS isn’t available, we cannot keep a per-thread stack.
+     * Fall back to the global default context instead of crashing.
+     */
+    GFallbackTLS *t = get_fallback_tls();
+    return t->context_stack->head ? t->context_stack->head->data : NULL;
+  }
 #endif
   GQueue *stack;
 
@@ -1089,13 +1174,14 @@ GMainContext *
 g_main_context_ref_thread_default (void)
 {
 #if defined(G_FALLIBLE_GPRIVATE)
-  /* If TLS isn’t available, we cannot keep a per-thread stack.
-   * Fall back to the global default context instead of crashing.
-   */
   if (!glib_is_available ()) {
-    //return g_main_context_ref (g_main_context_default ());
-    GMainContext *def = g_main_context_default (); /* never NULL */
-    return g_main_context_ref (def);
+    GFallbackTLS *t = get_fallback_tls();
+    GMainContext *ctx = NULL;
+    if (t->context_stack && t->context_stack->head)
+      ctx = t->context_stack->head->data;  /* may be NULL => global default */
+    if (ctx == NULL)
+      ctx = g_main_context_default();      /* never NULL */
+    return g_main_context_ref(ctx);
   }
 #endif
   GMainContext *context;
@@ -3229,13 +3315,16 @@ g_main_dispatch_free (gpointer dispatch)
 static GMainDispatch *
 get_dispatch (void)
 {
-  static GPrivate depth_private = G_PRIVATE_INIT (g_main_dispatch_free);
 #if defined(G_FALLIBLE_GPRIVATE)
   if (!glib_is_available ()) {
-    // XXX TODO: emulate TLS with a global map keyed by thread id guarded by a mutex
-    return NULL;
+    /* If TLS isn’t available, we cannot keep a per-thread stack.
+     * Fall back to the global default context instead of crashing.
+     */
+    GFallbackTLS *t = get_fallback_tls();
+    return &t->dispatch;  /* per-thread emulated dispatch */
   }
 #endif
+  static GPrivate depth_private = G_PRIVATE_INIT (g_main_dispatch_free);
   GMainDispatch *dispatch;
 
   dispatch = g_private_get (&depth_private);
