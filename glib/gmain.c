@@ -1061,6 +1061,10 @@ g_main_context_pop_thread_default (GMainContext *context)
 GMainContext *
 g_main_context_get_thread_default (void)
 {
+#if defined(G_FALLIBLE_GPRIVATE)
+  if (!glib_is_available ())
+    return NULL;
+#endif
   GQueue *stack;
 
   stack = g_private_get (&thread_context_stack);
@@ -1088,6 +1092,13 @@ g_main_context_get_thread_default (void)
 GMainContext *
 g_main_context_ref_thread_default (void)
 {
+#if defined(G_FALLIBLE_GPRIVATE)
+  /* If TLS isn’t available, we cannot keep a per-thread stack.
+   * Fall back to the global default context instead of crashing.
+   */
+  if (!glib_is_available ())
+    return g_main_context_ref (g_main_context_default ());
+#endif
   GMainContext *context;
 
   context = g_main_context_get_thread_default ();
