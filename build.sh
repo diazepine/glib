@@ -11,9 +11,9 @@ fi
 
 source .venv/bin/activate
 
-rm -rf builddir/_stage
+rm -rf builddir
 
-meson setup builddir --native-file native-3.11.ini $FALLIBLE_GPRIVATE
+meson setup builddir --native-file native-3.11.ini $FALLIBLE_GPRIVATE -Dtests=false
 meson compile -C builddir
 
 DESTDIR="$PWD/builddir/_stage" ninja -C builddir install
