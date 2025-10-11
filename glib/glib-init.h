@@ -49,6 +49,11 @@ gboolean g_win32_handle_is_socket (void *h);
 
 #endif
 
+#if defined(G_FALLIBLE_GPRIVATE)
+gboolean glib_is_initialized (void);
+#endif
+
+
 G_GNUC_INTERNAL void _g_slice_deinit (void);
 G_GNUC_INTERNAL void _g_thread_init (void);
 G_GNUC_INTERNAL void _g_thread_deinit (void);

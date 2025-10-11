@@ -122,7 +122,7 @@
 
 G_BEGIN_DECLS
 
-
+#if defined(G_FALLIBLE_GPRIVATE)
 typedef void (*GlibFailureCallback) (void *user_data);
 
 /* TRUE until the first pthread_key_create() fails anywhere inside GLib. */
@@ -134,7 +134,7 @@ gboolean glib_is_available (void);
  */
 GLIB_AVAILABLE_IN_2_68
 void glib_set_failure_callback (GlibFailureCallback cb, void *user_data);
-
+#endif
 
 GLIB_AVAILABLE_IN_2_68
 void                            glib_init                               (void);

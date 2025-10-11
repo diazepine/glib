@@ -65,6 +65,18 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+
+/* fallback printer that avoids GLib internals or mutexes*/
+static void
+g_printerr_fallback (const char *msg)
+{
+  /* async-signal-safe-ish best effort: write to fd=2 */
+  if (msg != NULL)
+    (void) write(2, msg, strlen(msg));
+  (void) write(2, "\n", 1);
+}
+
+
 #ifdef HAVE_MACH_MACH_H
 #include <mach/mach.h>
 #endif
@@ -91,6 +103,7 @@
 #include "glib-nolog.h"
 #endif
 
+#if defined(G_FALLIBLE_GPRIVATE)
 /* The following are needed for the fallible GPrivate API */
 static volatile int g_tls_available = 1;
 static GlibFailureCallback g_tls_failure_cb = NULL;
@@ -138,7 +151,7 @@ g_tls_key_create (pthread_key_t *key, void (*dtor)(void *))
   }
   return r;
 }
-
+#endif
 
 
 static pthread_mutex_t g_thread_state_lock;
@@ -190,11 +203,32 @@ g_thread_ensure_destructor_registered (void)
   thread->destructor_registered = TRUE;
 }
 
+#if defined(G_FALLIBLE_GPRIVATE)
+static inline gboolean
+glib_can_log_safely (void)
+{
+  return glib_is_initialized () && g_is_tls_available ();
+}
+#endif
+
+
 static void
 g_thread_abort (gint         status,
                 const gchar *function)
 {
 #ifndef G_DISABLE_CHECKS
+#if defined(G_FALLIBLE_GPRIVATE)
+  if (!glib_can_log_safely ()) {
+    char buf[256];
+    int n = snprintf (buf, sizeof (buf),
+        "GLib (gthread-posix.c): Unexpected error during '%s': %s. Aborting.",
+        function, strerror (status));
+    if (n > 0) g_printerr_fallback (buf);
+  }
+  return;
+  /* libc stdio only; still avoid GLib logging here */
+#endif
+
   fprintf (stderr, "GLib (gthread-posix.c): Unexpected error from C library during '%s': %s.  Aborting.\n",
            function, strerror (status));
 #endif
