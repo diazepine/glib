@@ -109,6 +109,9 @@ static volatile int g_tls_available = 1;
 static GlibFailureCallback g_tls_failure_cb = NULL;
 static void *g_tls_cb_failure_data = NULL;
 
+static inline int
+g_tls_key_create (pthread_key_t *key, void (*dtor)(void *));
+
 /* Return TRUE if TLS is available, FALSE otherwise.
  * Once this returns FALSE, it will always return FALSE.
  * This function is lock-free and async-signal-safe.
@@ -116,7 +119,20 @@ static void *g_tls_cb_failure_data = NULL;
 gboolean
 g_is_tls_available (void)
 {
-  return g_atomic_int_get (&g_tls_available) != 0;
+  if (g_atomic_int_get (&g_tls_available) == 0)
+    return FALSE;
+
+  /* probe by trying to allocate one key via the wrapper */
+  pthread_key_t probe;
+  int r = g_tls_key_create (&probe, NULL);
+  if (r == 0) {
+    /* success: free the key and return TRUE */
+    pthread_key_delete (probe);
+    return TRUE;
+  }
+  /* g_tls_key_create() already marked unavailable and invoked
+   * the one-shot callback if set */
+  return FALSE;
 }
 
 /* Set a callback to be invoked on the first TLS failure.
@@ -1376,14 +1392,18 @@ gpointer
 g_private_get (GPrivate *key)
 {
 #if defined(G_FALLIBLE_GPRIVATE)
+  if (G_UNLIKELY (!g_is_tls_available ()))
+    return NULL;
+
   pthread_key_t *impl = g_private_get_impl (key);
 
   if (G_UNLIKELY (impl == NULL))
     return NULL;
-#endif
+  return pthread_getspecific (*impl);
+#else
   /* quote POSIX: No errors are returned from pthread_getspecific(). */
   return pthread_getspecific (*g_private_get_impl (key));
-
+#endif
 }
 
 /**
@@ -1402,13 +1422,21 @@ g_private_set (GPrivate *key,
                gpointer  value)
 {
 #if defined(G_FALLIBLE_GPRIVATE)
+  if (G_UNLIKELY (!g_is_tls_available ()))
+    return;  // no-op
+
   pthread_key_t *impl = g_private_get_impl (key);
 
   /* If we failed to create the key, just return and don't proceed with
    * pthread_setspecific that can result to a crash */
   if (G_UNLIKELY (impl == NULL))
     return;
-#endif
+  if G_UNLIKELY (pthread_setspecific (*impl, value) != 0)
+    g_thread_abort (errno, "pthread_setspecific");
+
+  g_thread_private_destroy_later (key, value);
+  g_thread_ensure_destructor_registered ();
+#else
   gint status;
 
   if G_UNLIKELY ((status = pthread_setspecific (*g_private_get_impl (key), value)) != 0)
@@ -1416,6 +1444,7 @@ g_private_set (GPrivate *key,
 
   g_thread_private_destroy_later (key, value);
   g_thread_ensure_destructor_registered ();
+#endif
 }
 
 /**
@@ -1436,14 +1465,32 @@ void
 g_private_replace (GPrivate *key,
                    gpointer  value)
 {
-  pthread_key_t *impl = g_private_get_impl (key);
 
 #if defined(G_FALLIBLE_GPRIVATE)
+if (G_UNLIKELY (!g_is_tls_available ()))
+    return;
+
+  pthread_key_t *impl = g_private_get_impl (key);
+
   /* If we failed to create the key, just return and don't proceed with
    * pthread_setspecific that can result to a crash */
   if (G_UNLIKELY (impl == NULL))
     return;
-#endif
+
+  gpointer old = pthread_getspecific (*impl);
+
+  {
+    gint status = pthread_setspecific (*impl, value);
+    if G_UNLIKELY (status != 0)
+      g_thread_abort (status, "pthread_setspecific");
+  }
+
+  if (old && key->notify)
+    key->notify (old);
+
+  g_thread_private_destroy_later (key, value);
+  g_thread_ensure_destructor_registered ();
+#else
 
   gpointer old;
   gint status;
@@ -1458,6 +1505,7 @@ g_private_replace (GPrivate *key,
 
   g_thread_private_destroy_later (key, value);
   g_thread_ensure_destructor_registered ();
+#endif
 }
 
 /* {{{1 GThread */

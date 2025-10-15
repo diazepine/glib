@@ -23,6 +23,7 @@ static void exhaust_tls_keys (gboolean release_after) {
 }
 
 void glib_init(void);
+extern gboolean glib_is_available (void);
 
 int main(void) {
 
@@ -40,8 +41,10 @@ int main(void) {
   }
 #endif
   glib_init();
+  //printf("[test]    glib_is_available: %d\n", glib_is_available());
 
   exhaust_tls_keys(FALSE);
+  //printf("[test]    glib_is_available: %d\n", glib_is_available());
 
   // call glib_deinit here so that we can replicate a glib_init failure due
   // to exhausted TLS keys
@@ -56,7 +59,9 @@ int main(void) {
     g_print(" -> glib_try_init succeeded\n");
   }
 #endif
+  //printf("[test]    glib_is_available: %d\n", glib_is_available());
   glib_init();
+  //printf("[test]    glib_is_available: %d\n", glib_is_available());
 
   return 0;
 }

@@ -449,7 +449,6 @@ glib_init (void)
   /* If TLS keys are exhausted, do not attempt to init as this would hit
    * g_quark/logging code that rely on TLS! */
   if (G_UNLIKELY (!glib_is_available ()))
-    glib_initialized = FALSE;
     return;
 #endif
 

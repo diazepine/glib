@@ -56,10 +56,14 @@ main (void)
   printf("[test] 2) exhaust TLS keys\n");
   exhaust_tls_keys(FALSE);
 
+  printf("[test] 3) glib init\n");
+  glib_init();
+  printf("[test]    glib_is_available: %d\n (should not be!)", glib_is_available());
+
   if (!glib_is_available())
     printf("[test]    TLS now unavailable (expected!)\n");
 
-  printf("[test] 3) touch thread-default APIs (should not abort)\n");
+  printf("[test] 4) touch thread-default APIs (should not abort)\n");
   GMainContext *def = g_main_context_get_thread_default();
   printf("[test]    get_thread_default -> %p\n", (void*) def);
 
@@ -68,6 +72,6 @@ main (void)
   g_main_context_pop_thread_default(tmp);   /* early-return in no-TLS */
   g_main_context_unref(tmp);
 
-  printf("[test] 4) done; no abort occurred (expected!)\n");
+  printf("[test] 5) done; no abort occurred (expected!)\n");
   return 0;
 }
