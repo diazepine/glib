@@ -50,7 +50,7 @@ main (void)
   glib_set_failure_callback (on_tls_failure, NULL);
 
   printf("[test] 1) glib init\n");
-  glib_init();
+  //glib_init();
   printf("[test]    glib_is_available: %d\n", glib_is_available());
 
   printf("[test] 2) exhaust TLS keys\n");

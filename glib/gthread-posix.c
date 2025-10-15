@@ -105,7 +105,7 @@ g_printerr_fallback (const char *msg)
 
 #if defined(G_FALLIBLE_GPRIVATE)
 /* The following are needed for the fallible GPrivate API */
-static volatile int g_tls_available = 1;
+static int g_tls_available = 1;
 static GlibFailureCallback g_tls_failure_cb = NULL;
 static void *g_tls_cb_failure_data = NULL;
 
@@ -121,18 +121,7 @@ g_is_tls_available (void)
 {
   if (g_atomic_int_get (&g_tls_available) == 0)
     return FALSE;
-
-  /* probe by trying to allocate one key via the wrapper */
-  pthread_key_t probe;
-  int r = g_tls_key_create (&probe, NULL);
-  if (r == 0) {
-    /* success: free the key and return TRUE */
-    pthread_key_delete (probe);
-    return TRUE;
-  }
-  /* g_tls_key_create() already marked unavailable and invoked
-   * the one-shot callback if set */
-  return FALSE;
+  return TRUE;
 }
 
 /* Set a callback to be invoked on the first TLS failure.
@@ -1466,11 +1455,11 @@ g_private_replace (GPrivate *key,
                    gpointer  value)
 {
 
+  pthread_key_t *impl = g_private_get_impl (key);
+
 #if defined(G_FALLIBLE_GPRIVATE)
 if (G_UNLIKELY (!g_is_tls_available ()))
     return;
-
-  pthread_key_t *impl = g_private_get_impl (key);
 
   /* If we failed to create the key, just return and don't proceed with
    * pthread_setspecific that can result to a crash */
